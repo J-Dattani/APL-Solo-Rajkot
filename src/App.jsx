@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 function App() {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
   const [currentTime, setCurrentTime] = useState('');
   
   // New Mode & Input States
@@ -76,7 +76,7 @@ function App() {
     }
 
     try {
-      const res = await fetch('http://localhost:8000/api/session/chat', {
+      const res = await fetch('/api/session/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -29,8 +29,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pull key directly from environment
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Pull key directly from environment, with hardcoded emergency fallback
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBqH-DRvxNnmLLuEr8K6LAj_UlASD6lnJI")
 
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
