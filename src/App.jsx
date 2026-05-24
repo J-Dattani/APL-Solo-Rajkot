@@ -1,508 +1,396 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react';
 
-const API_BASE = 'http://127.0.0.1:8000'
-
-export default function App() {
-  const [topic, setTopic] = useState('React Hooks and State Management')
-  const [sessionId, setSessionId] = useState(null)
-  const [session, setSession] = useState(null)
-  const [inputMessage, setInputMessage] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+function App() {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [currentTime, setCurrentTime] = useState('');
   
-  const chatEndRef = useRef(null)
+  // New Mode & Input States
+  const [sessionMode, setSessionMode] = useState('Structured Journey');
+  const [selectedTopic, setSelectedTopic] = useState('Rust Ownership & Borrowing');
+  const [unrestrictedQuery, setUnrestrictedQuery] = useState('');
+  
+  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [quiz, setQuiz] = useState(null);
+  
+  // New Payload Rendering States
+  const [mindMap, setMindMap] = useState(null);
+  const [resources, setResources] = useState(null);
+  
+  // State profile monitoring blocks
+  const [mastery, setMastery] = useState(10);
+  const [pace, setPace] = useState(1.0);
 
-  // Scroll to bottom of chat
+  // 1. Keep the UI timestamp perfectly accurate on the clock frame
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [session?.history])
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
-  // Start new session
-  const startSession = async (customTopic) => {
-    setLoading(true)
-    setError(null)
-    const targetTopic = customTopic || topic
+  const handleQuizAnswerSubmit = (idx, correct_idx, opt) => {
+    if(idx === correct_idx) {
+      alert("Correct answer! Mastery metrics scaling up.");
+      setMastery(prev => Math.min(100, prev + 10));
+    } else {
+      alert("Incorrect. Initiating micro-concept breakdown sequence.");
+      setMastery(prev => Math.max(0, prev - 5));
+    }
+  };
+
+  const handleInitializeEngine = async () => {
+    if (loading) return;
+
+    // Determine exactly what topic string to ship to the backend
+    let finalTopicPayload = "";
+    let modeMessageContext = "";
+
+    if (sessionMode === 'Exploratory Deep-Dive') {
+      if (!unrestrictedQuery.trim()) {
+        alert("Please enter an exploratory query in the text box for Mode B!");
+        return;
+      }
+      finalTopicPayload = unrestrictedQuery.trim();
+      modeMessageContext = `Exploratory Query: User wants to deep-dive into an unlisted topic. Completely bypass structured curriculum pathways.`;
+    } else {
+      finalTopicPayload = selectedTopic;
+      modeMessageContext = ""; // Regular structured mode handler
+    }
+
+    setLoading(true);
+    setQuiz(null);
+    setMindMap(null);
+    setResources(null);
+
+    // Push the user message into the chat array visually
+    const currentInput = finalTopicPayload;
+    setMessages(prev => [...prev, { sender: 'user', text: currentInput }]);
+    
+    // Clear input for the next cycle
+    if (sessionMode === 'Exploratory Deep-Dive') {
+      setUnrestrictedQuery('');
+    }
+
     try {
-      const response = await fetch(`${API_BASE}/api/session/start`, {
+      const res = await fetch('http://localhost:8000/api/session/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: targetTopic }),
-      })
-      if (!response.ok) throw new Error('Failed to start session. Is the backend server running?')
-      const data = await response.json()
-      setSession(data)
-      setSessionId(data.session_id)
+        body: JSON.stringify({
+          topic: finalTopicPayload, // 🎯 PURE STREAM: Passes the raw query directly when in Mode B
+          user_message: modeMessageContext,
+          current_mastery: mastery,
+          current_pace: pace
+        })
+      });
+      const data = await res.json();
+      
+      const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+      
+      // Push the AI's response text into the array
+      setMessages(prev => [...prev, { sender: 'agent', text: parsed.lesson_content }]);
+      
+      // Only show the quiz card if we are tracking a preset structured journey track
+      if (parsed.quiz && sessionMode === 'Structured Journey') {
+        setQuiz(parsed.quiz);
+      } else {
+        setQuiz(null); 
+      }
+
+      if (parsed.mind_map_nodes) setMindMap(parsed.mind_map_nodes);
+      if (parsed.curated_resources) setResources(parsed.curated_resources);
+      
+      setMastery(prev => Math.min(100, prev + (parsed.mastery_delta || 0)));
+      setPace(parsed.pace_adjustment || 1.0);
     } catch (err) {
-      setError(err.message)
+      console.error("Connection block to local backend engine:", err);
+      setMessages(prev => [...prev, { sender: 'agent', text: "Error syncing backend routing parameters. Check terminal logs." }]);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
-
-  // Send message to session
-  const sendMessage = async (messageText) => {
-    if (!messageText.trim() || !sessionId) return
-    setLoading(true)
-    setError(null)
-    setInputMessage('')
-    try {
-      const response = await fetch(`${API_BASE}/api/session/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, message: messageText }),
-      })
-      if (!response.ok) throw new Error('Error sending message.')
-      const data = await response.json()
-      setSession(data)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Submit quiz choice
-  const submitQuizChoice = async (optionId, optionText) => {
-    const message = `[Selected Option ${optionId}]: ${optionText}`
-    await sendMessage(message)
-  }
-
-  // Reset Session
-  const resetSession = async () => {
-    if (!sessionId) return
-    setLoading(true)
-    setError(null)
-    try {
-      const response = await fetch(`${API_BASE}/api/session/reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId }),
-      })
-      if (!response.ok) throw new Error('Error resetting session.')
-      const data = await response.json()
-      setSession(data)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const masteryScore = session?.profile?.mastery_score || 0
-  const paceCoefficient = session?.profile?.pace_coefficient || 1.0
-  const exploredConcepts = session?.profile?.explored_concepts || []
-  const knowledgeGaps = session?.profile?.knowledge_gaps || []
-  const activeQuiz = session?.active_quiz || null
-
-  // Circular progress calculations
-  const radius = 40
-  const circumference = 2 * Math.PI * radius
-  const strokeDashoffset = circumference - (masteryScore / 100) * circumference
+  };
 
   return (
-    <div className="min-h-screen bg-brand-bg text-brand-navy flex flex-col font-sans selection:bg-brand-navy selection:text-brand-bg">
+    <div className="min-h-screen max-h-screen bg-[#FDFBF7] text-[#0A192F] font-sans flex flex-col overflow-hidden">
+      
       {/* HEADER SECTION */}
-      <header className="border-b border-brand-border px-8 py-5 flex items-center justify-between sticky top-0 bg-brand-bg/90 backdrop-blur-md z-10">
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center z-10 shrink-0">
         <div className="flex items-center gap-4">
-          <div className="border-2 border-brand-border px-3 py-1 font-mono text-sm uppercase tracking-wider font-bold bg-brand-navy text-brand-bg">
-            Cognitive Tutor
-          </div>
-          {sessionId && (
-            <div className="hidden md:flex items-center gap-2 text-xs font-mono text-brand-slate opacity-70">
-              <span>ID: {sessionId.substring(0, 8)}...</span>
-            </div>
-          )}
+          <button 
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="text-xs bg-slate-100 hover:bg-[#0A192F] hover:text-white px-3 py-1.5 rounded border border-slate-200 transition-all font-mono uppercase tracking-wider"
+          >
+            {isSidebarOpen ? '← Hide Settings' : '→ Show Panel'}
+          </button>
+          <h1 className="text-xl font-bold tracking-tight uppercase font-mono">Cognitive Tutor Engine v2.0</h1>
         </div>
-
-        {/* ACTIVE AGENT PROCESSING STATUS CHIPS */}
-        <div className="flex items-center gap-3">
-          {loading ? (
-            <div className="flex items-center gap-2 bg-brand-cream border border-brand-border px-3 py-1 text-xs font-mono rounded">
-              <span className="w-2.5 h-2.5 rounded-full bg-brand-gold animate-ping"></span>
-              <span className="font-semibold uppercase tracking-wider text-brand-slate">CRITIQUING & ADAPTING</span>
-            </div>
-          ) : activeQuiz ? (
-            <div className="flex items-center gap-2 bg-brand-cream border border-brand-border px-3 py-1 text-xs font-mono rounded">
-              <span className="w-2.5 h-2.5 rounded-full bg-brand-crimson animate-pulse"></span>
-              <span className="font-semibold uppercase tracking-wider text-brand-slate">EVALUATING: QUIZ ACTIVE</span>
-            </div>
-          ) : sessionId ? (
-            <div className="flex items-center gap-2 bg-brand-cream border border-brand-border px-3 py-1 text-xs font-mono rounded">
-              <span className="w-2.5 h-2.5 rounded-full bg-brand-olive"></span>
-              <span className="font-semibold uppercase tracking-wider text-brand-slate">IDLE: WAITING</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 bg-brand-cream border border-brand-border px-3 py-1 text-xs font-mono rounded">
-              <span className="w-2.5 h-2.5 rounded-full bg-brand-slate opacity-30"></span>
-              <span className="font-semibold uppercase tracking-wider text-brand-slate">OFFLINE</span>
-            </div>
-          )}
+        
+        <div className="flex items-center gap-4 font-mono text-xs">
+          <span className="bg-emerald-500/10 text-emerald-700 px-3 py-1 rounded-full border border-emerald-300 uppercase font-bold tracking-widest animate-pulse">
+            ● Active Live Stream
+          </span>
+          <span className="text-slate-500 bg-slate-100 px-3 py-1 rounded border border-slate-200 font-medium">
+            ⏱️ {currentTime || "Syncing..."}
+          </span>
         </div>
       </header>
 
-      {/* ERROR ALERT BOX */}
-      {error && (
-        <div className="bg-red-50 border-b border-brand-border px-8 py-3 text-sm text-brand-crimson font-mono flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="font-bold">[ERROR]</span>
-            <span>{error}</span>
-          </div>
-          <button 
-            onClick={() => setError(null)} 
-            className="text-brand-crimson hover:underline text-xs font-bold uppercase"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {/* DASHBOARD BODY */}
-      <div className="flex-1 flex flex-col lg:flex-row">
+      {/* CORE FRAME CONTAINER */}
+      <div className="flex-1 flex overflow-hidden w-full relative">
         
-        {/* LEFT PANEL: PROFILE STATE MONITOR */}
-        <aside className="w-full lg:w-96 border-r border-brand-border bg-brand-bg flex flex-col p-8 gap-8 overflow-y-auto">
-          <div>
-            <h2 className="text-xs uppercase font-mono tracking-widest text-brand-slate/60 mb-4 font-bold">
-              Learning Focus
-            </h2>
-            {!sessionId ? (
-              <div className="flex flex-col gap-3">
-                <input
-                  type="text"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  placeholder="Enter a concept to master..."
-                  className="w-full bg-brand-cream border border-brand-border px-4 py-3 text-sm font-sans focus:outline-none focus:ring-1 focus:ring-brand-border"
-                />
-                <button
-                  onClick={() => startSession()}
-                  disabled={loading}
-                  className="w-full bg-brand-navy hover:bg-brand-slate text-brand-bg font-bold py-3 text-sm tracking-wide uppercase transition duration-150 active:scale-[0.98] disabled:opacity-50"
+        {/* MOBILE BACKDROP OVERLAY */}
+        {isSidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 md:hidden transition-opacity"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
+        {/* SIDEBAR PANEL */}
+        <div className={`
+          fixed inset-y-0 left-0 z-50 transform md:relative md:translate-x-0
+          ${isSidebarOpen ? 'translate-x-0 w-80 border-r' : '-translate-x-full w-80 md:w-0 overflow-hidden border-r-0'} 
+          bg-white border-slate-200 transition-all duration-300 flex flex-col justify-between p-5 overflow-y-auto shrink-0
+        `}>
+          <div className="space-y-6 min-w-[280px]">
+            
+            {/* MODE TOGGLE */}
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-widest text-slate-400 block mb-2">Session Mode</label>
+              <div className="flex bg-slate-100 rounded p-1 border border-slate-200">
+                <button 
+                  onClick={() => setSessionMode('Structured Journey')}
+                  className={`flex-1 text-[10px] font-bold uppercase py-2 rounded transition-all ${sessionMode === 'Structured Journey' ? 'bg-white shadow text-[#0A192F]' : 'text-slate-400 hover:text-slate-600'}`}
                 >
-                  Initialize Tutor Engine
+                  Mode A
+                </button>
+                <button 
+                  onClick={() => setSessionMode('Exploratory Deep-Dive')}
+                  className={`flex-1 text-[10px] font-bold uppercase py-2 rounded transition-all ${sessionMode === 'Exploratory Deep-Dive' ? 'bg-[#0A192F] shadow text-white' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Mode B
                 </button>
               </div>
-            ) : (
-              <div className="flex flex-col gap-3 border border-brand-border p-4 bg-brand-cream">
-                <div className="text-xs font-mono uppercase text-brand-slate/60 font-semibold">Active Topic</div>
-                <div className="text-lg font-serif font-bold leading-tight">{session.topic}</div>
-                <button
-                  onClick={resetSession}
-                  disabled={loading}
-                  className="mt-2 text-left text-xs font-mono uppercase tracking-wider text-brand-crimson hover:underline font-bold"
+              <p className="text-[9px] text-slate-400 mt-1 font-mono text-center uppercase">{sessionMode}</p>
+            </div>
+
+            {sessionMode === 'Structured Journey' && (
+              <div className="animate-fade-in">
+                <label className="text-[11px] font-bold uppercase tracking-widest text-slate-400 block mb-2">Target Topic</label>
+                <select 
+                  value={selectedTopic}
+                  onChange={(e) => setSelectedTopic(e.target.value)}
+                  className="w-full bg-[#FDFBF7] border border-slate-300 rounded p-2.5 text-sm font-medium focus:outline-none focus:border-[#0A192F]"
                 >
-                  Reset Session State
-                </button>
-                <button
-                  onClick={() => setSessionId(null)}
-                  className="text-left text-xs font-mono uppercase tracking-wider text-brand-slate hover:underline font-bold"
-                >
-                  Choose Different Topic
-                </button>
+                  <option value="Rust Ownership & Borrowing">Rust Ownership & Borrowing</option>
+                  <option value="Docker Network Namespace Internals">Docker Network Namespace Internals</option>
+                  <option value="Asynchronous Event Loops in JS">Asynchronous Event Loops in JS</option>
+                  <option value="Vector DB & Cosine Similarity">Vector DB & Cosine Similarity</option>
+                </select>
               </div>
             )}
+
+            {/* PERFORMANCE METRICS CONTAINER */}
+            <div className="border border-slate-200 rounded-xl p-4 bg-[#FDFBF7] space-y-4 shadow-sm">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 border-b pb-2">Live Session Variables</h3>
+              
+              {/* Mastery Meter */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-mono font-bold">
+                  <span>Comprehension</span>
+                  <span className="text-indigo-600">{mastery}%</span>
+                </div>
+                <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                  <div className="bg-[#0A192F] h-full transition-all duration-500" style={{ width: `${mastery}%` }}></div>
+                </div>
+              </div>
+
+              {/* Pace Meter */}
+              <div className="pt-2">
+                <div className="flex justify-between text-xs font-mono font-bold">
+                  <span>Pace Coefficient</span>
+                  <span className="text-emerald-600">{pace}x</span>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-tight mt-1">Adaptive model scaling speed modifier.</p>
+              </div>
+            </div>
           </div>
 
-          {/* MASTERY METRIC DIALS */}
-          {sessionId && (
-            <div className="flex flex-col gap-6">
-              <h2 className="text-xs uppercase font-mono tracking-widest text-brand-slate/60 font-bold">
-                State Variables
-              </h2>
-              
-              {/* mastery score circular progress dial */}
-              <div className="flex items-center gap-6 border border-brand-border p-5 bg-brand-cream">
-                <div className="relative w-20 h-20 flex items-center justify-center">
-                  <svg className="w-full h-full transform -rotate-90">
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r={radius}
-                      stroke="rgba(30, 41, 59, 0.1)"
-                      strokeWidth="6"
-                      fill="transparent"
-                    />
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r={radius}
-                      stroke="var(--color-brand-navy)"
-                      strokeWidth="6"
-                      fill="transparent"
-                      strokeDasharray={circumference}
-                      strokeDashoffset={strokeDashoffset}
-                      className="progress-ring__circle"
-                    />
-                  </svg>
-                  <span className="absolute text-lg font-mono font-bold">{masteryScore}%</span>
-                </div>
-                <div className="flex-1">
-                  <div className="text-sm font-bold font-serif uppercase tracking-tight">Comprehension</div>
-                  <p className="text-xs text-brand-slate/80 leading-relaxed mt-1">
-                    Mastery index dynamically calculated from response correctness and cognitive depth.
-                  </p>
-                </div>
-              </div>
+          <button 
+            onClick={handleInitializeEngine}
+            disabled={loading || (sessionMode === 'Exploratory Deep-Dive' && !unrestrictedQuery.trim())}
+            className="w-full bg-[#0A192F] text-white font-bold py-3 px-4 rounded shadow hover:bg-slate-800 active:scale-[0.98] transition-all tracking-wider text-xs uppercase font-mono mt-6 disabled:opacity-50"
+          >
+            {loading ? 'Processing State...' : 'Initialize Tutor Engine'}
+          </button>
+        </div>
 
-              {/* pace coefficient */}
-              <div className="border border-brand-border p-5 bg-brand-cream flex flex-col gap-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-serif font-bold">Pace Coefficient</span>
-                  <span className="font-mono text-sm font-bold bg-brand-navy text-brand-bg px-2.5 py-0.5">{paceCoefficient}x</span>
+        {/* COMPLETELY RE-ENGINEERED SCROLLABLE CHAT MESSAGE TERMINAL */}
+        <main className="flex-1 bg-[#FDFBF7] flex flex-col overflow-hidden relative w-full">
+          
+          {/* CHAT BUBBLE STREAM CONTAINER */}
+          <div className="flex-1 overflow-y-auto w-full p-4 md:p-6 flex flex-col items-center">
+            <div className="max-w-4xl w-full space-y-4 flex flex-col">
+            {messages && messages.length > 0 ? (
+              messages.map((msg, index) => (
+                <div 
+                  key={index} 
+                  className={`max-w-2xl p-4 rounded-xl shadow-sm border transition-all ${
+                    msg.sender === 'user' 
+                      ? 'bg-slate-100 border-slate-200 ml-auto text-right text-[#0A192F] font-medium' 
+                      : 'bg-white border-slate-200 mr-auto text-left text-slate-800'
+                  }`}
+                >
+                  {/* Sender Identity Header */}
+                  <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-2">
+                    {msg.sender === 'user' ? '// User Query' : '// Cognitive Agent'}
+                  </span>
+                  
+                  {/* Main Content Body */}
+                  <div className={`text-sm leading-relaxed whitespace-pre-wrap ${msg.sender === 'agent' ? 'font-serif' : 'font-sans'}`}>
+                    {msg.text}
+                  </div>
+
+                  {/* Render optional Mind Map and Resources ONLY on the latest agent message if applicable */}
+                  {msg.sender === 'agent' && index === messages.length - 1 && (
+                    <div className="mt-4 space-y-4">
+                      {/* MIND MAP HIERARCHY */}
+                      {mindMap && mindMap.length > 0 && (
+                        <div className="bg-slate-50 border border-slate-200 rounded p-4 animate-fade-in">
+                          <h2 className="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-widest mb-3">Structural Mind-Map Hierarchy</h2>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {mindMap.map((node, i) => (
+                              <React.Fragment key={i}>
+                                <div className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-1 rounded text-xs font-medium">
+                                  {node}
+                                </div>
+                                {i < mindMap.length - 1 && <div className="text-slate-300 font-bold text-xs">→</div>}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* CURATED RESOURCES */}
+                      {resources && resources.length > 0 && (
+                        <div className="bg-slate-50 border border-emerald-100 rounded p-4 animate-fade-in">
+                          <h2 className="text-[10px] font-bold font-mono text-emerald-600 uppercase tracking-widest mb-3">Curated Resources & Deep Dives</h2>
+                          <div className="flex flex-col gap-2">
+                            {resources.map((res, i) => (
+                              <a key={i} href={res.url} target="_blank" rel="noreferrer" className="block border border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm p-3 rounded transition-all group">
+                                <div className="flex justify-between items-start gap-2">
+                                  <span className="text-xs font-bold text-[#0A192F] group-hover:text-emerald-800">{res.title}</span>
+                                  <span className="text-[8px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded uppercase font-bold">{res.type}</span>
+                                </div>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="h-1.5 w-full bg-brand-navy/10 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-brand-navy transition-all duration-300"
-                    style={{ width: `${Math.min(100, (paceCoefficient / 2.0) * 100)}%` }}
-                  ></div>
-                </div>
-                <p className="text-xs text-brand-slate/80 leading-relaxed">
-                  Speed factor. Values below 1.0 indicate analogical breakdown; above 1.0 escalate technical specification complexity.
+              ))
+            ) : (
+              /* IDLE BASEBOARD */
+              <div className="my-auto text-center max-w-md mx-auto space-y-4 pt-20">
+                <div className="w-12 h-12 rounded-full border-2 border-[#0A192F] flex items-center justify-center mx-auto text-xl font-bold font-mono">Ω</div>
+                <h2 className="text-xl font-bold font-mono tracking-tight text-[#0A192F]">Awaiting Engine Injection</h2>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Select an optimization vector from the config panel or switch to Mode B to start a dynamic learning thread.
                 </p>
               </div>
+            )}
 
-              {/* explored concepts */}
-              <div className="border border-brand-border p-5 bg-brand-cream flex flex-col gap-3">
-                <div className="text-xs font-mono uppercase tracking-wider text-brand-slate/60 font-bold">
-                  Explored Concepts ({exploredConcepts.length})
+            {/* STATICALLY POSITIONED CURATED COMPONENT ROW (Appends under chat context) */}
+            {quiz && sessionMode === 'Structured Journey' && (
+              <div className="bg-white border-2 border-[#0A192F] rounded-xl p-6 shadow-md max-w-2xl mr-auto w-full animate-fade-in">
+                <span className="bg-[#0A192F] text-white text-[10px] font-mono px-2.5 py-1 rounded uppercase tracking-wider font-bold">
+                  Concept Challenge Verification
+                </span>
+                <h3 className="text-lg font-bold mt-4 mb-4 text-[#0A192F]">{quiz.question}</h3>
+                <div className="space-y-2.5">
+                  {quiz.options.map((opt, idx) => (
+                    <button 
+                      key={idx}
+                      onClick={() => handleQuizAnswerSubmit(idx, quiz.correct_option_index, opt)}
+                      className="w-full text-left bg-[#FDFBF7] hover:bg-slate-50 border border-slate-200 hover:border-[#0A192F] p-3.5 rounded text-sm transition-all font-medium flex items-center gap-3"
+                    >
+                      <span className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-xs border font-mono font-bold">{idx + 1}</span>
+                      {opt}
+                    </button>
+                  ))}
                 </div>
-                {exploredConcepts.length === 0 ? (
-                  <div className="text-xs font-mono text-brand-slate italic opacity-60">No concepts fully explored yet.</div>
-                ) : (
-                  <ul className="flex flex-wrap gap-2">
-                    {exploredConcepts.map((concept, index) => (
-                      <li key={index} className="bg-brand-olive/10 border border-brand-olive text-brand-olive text-xs font-mono px-2 py-1 rounded flex items-center gap-1.5 font-bold">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                        </svg>
-                        {concept}
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
-
-              {/* knowledge gaps */}
-              <div className="border border-brand-border p-5 bg-brand-cream flex flex-col gap-3">
-                <div className="text-xs font-mono uppercase tracking-wider text-brand-slate/60 font-bold">
-                  Active Knowledge Gaps ({knowledgeGaps.length})
-                </div>
-                {knowledgeGaps.length === 0 ? (
-                  <div className="text-xs font-mono text-brand-slate italic opacity-60">Zero detected gaps. Superb!</div>
-                ) : (
-                  <ul className="flex flex-col gap-2">
-                    {knowledgeGaps.map((gap, index) => (
-                      <li key={index} className="bg-brand-crimson/10 border border-brand-crimson text-brand-crimson text-xs font-mono px-3 py-1.5 rounded flex items-center gap-2 font-semibold">
-                        <span className="w-1.5 h-1.5 rounded-full bg-brand-crimson animate-pulse"></span>
-                        {gap}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
+            )}
+            
+            {/* SCROLL ANCHOR PADDING */}
+            <div className="h-4 shrink-0" />
             </div>
-          )}
-        </aside>
+          </div>
 
-        {/* RIGHT MAIN PANEL: INTERACTIVE LEARNING TERMINAL */}
-        <main className="flex-1 flex flex-col bg-brand-bg relative min-h-[500px]">
-          {!sessionId ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-brand-bg">
-              <div className="max-w-md flex flex-col items-center gap-6">
-                <div className="w-16 h-16 border-2 border-brand-navy rounded-full flex items-center justify-center text-3xl font-serif italic text-brand-navy bg-brand-cream font-bold">
-                  Ω
-                </div>
-                <div className="flex flex-col gap-2">
-                  <h1 className="text-2xl font-serif font-bold tracking-tight">Autonomous Cognitive Tutor</h1>
-                  <p className="text-sm text-brand-slate/85 leading-relaxed font-sans">
-                    An advanced learning framework powered by adaptive agentic cycles. Select a concept, test your understanding, and let the loop customize the complexity dynamically.
-                  </p>
-                </div>
-                <div className="w-full flex flex-col gap-2.5">
-                  <label className="text-xs font-mono uppercase tracking-widest text-brand-slate/70 text-left font-semibold">Suggested Masterclass Topics</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      'Rust Ownership & Borrowing',
-                      'Docker Network Namespace Internals',
-                      'Asynchronous Event Loops in JS',
-                      'Vector DB & Cosine Similarity'
-                    ].map((topicName) => (
-                      <button
-                        key={topicName}
-                        onClick={() => {
-                          setTopic(topicName)
-                          startSession(topicName)
-                        }}
-                        className="text-left border border-brand-border px-3.5 py-3 text-xs font-mono bg-brand-cream hover:bg-brand-navy hover:text-brand-bg transition duration-150 font-semibold"
-                      >
-                        {topicName}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col h-full max-h-[calc(100vh-140px)] overflow-hidden">
-              
-              {/* CHAT CHRONOLOGY LOG */}
-              <div className="flex-1 overflow-y-auto p-8 space-y-6">
-                {session.history.map((msg, index) => {
-                  const isModel = msg.role === 'model'
-                  const isUser = msg.role === 'user'
-
-                  if (isUser) {
-                    return (
-                      <div key={index} className="flex justify-end animate-fade-in">
-                        <div className="max-w-[80%] bg-brand-navy text-brand-bg px-5 py-3.5 border border-brand-navy font-mono text-sm leading-relaxed whitespace-pre-wrap">
-                          {msg.content}
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // Customize rendering style of tutor's replies
-                  const style = msg.presentation_style || 'STANDARD'
-                  
-                  return (
-                    <div key={index} className="flex justify-start animate-fade-in">
-                      <div className={`max-w-[90%] border border-brand-border p-6 flex flex-col gap-3 relative
-                        ${style === 'ANALOGY' ? 'bg-brand-cream/60 border-l-4 border-l-brand-gold' : ''}
-                        ${style === 'TECHNICAL' ? 'bg-brand-cream/30 border-l-4 border-l-brand-slate font-mono text-sm' : 'font-sans'}
-                        ${style === 'STANDARD' ? 'bg-brand-cream/10' : ''}
-                      `}>
-                        
-                        {/* STYLE INDICATOR BADGES */}
-                        <div className="absolute -top-2.5 left-4 px-2 py-0.5 border border-brand-border bg-brand-bg text-[10px] font-mono tracking-widest font-bold uppercase rounded text-brand-slate">
-                          {style} PRESENTATION
-                        </div>
-
-                        {/* MARKDOWN MESSAGE */}
-                        <div className="text-sm leading-relaxed whitespace-pre-wrap mt-2 font-serif text-brand-navy">
-                          {msg.content}
-                        </div>
-
-                        {/* TIMESTAMP */}
-                        <div className="text-[10px] font-mono text-brand-slate/60 self-end mt-1">
-                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-
-                {/* ACTIVE QUIZ CHALLENGE BOX */}
-                {activeQuiz && (
-                  <div className="flex justify-start animate-fade-in">
-                    <div className="max-w-[90%] border-2 border-brand-border bg-brand-cream/80 p-6 flex flex-col gap-5 w-full">
-                      <div className="flex items-center gap-2">
-                        <div className="bg-brand-navy text-brand-bg text-[10px] font-mono uppercase px-2 py-0.5 font-bold">
-                          Concept Challenge Verification
-                        </div>
-                      </div>
-                      
-                      <div className="font-serif text-base font-bold text-brand-navy leading-tight">
-                        {activeQuiz.question}
-                      </div>
-
-                      <div className="grid grid-cols-1 gap-2.5">
-                        {activeQuiz.options.map((opt) => (
-                          <button
-                            key={opt.id}
-                            disabled={loading}
-                            onClick={() => submitQuizChoice(opt.id, opt.text)}
-                            className="text-left border border-brand-border hover:border-brand-navy p-3.5 bg-brand-bg hover:bg-brand-cream transition duration-150 flex items-start gap-3 disabled:opacity-50 group"
-                          >
-                            <span className="font-mono bg-brand-cream group-hover:bg-brand-navy group-hover:text-brand-bg border border-brand-border w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">
-                              {opt.id}
-                            </span>
-                            <span className="text-xs font-sans mt-0.5 text-brand-navy/90">{opt.text}</span>
-                          </button>
-                        ))}
-                      </div>
-                      
-                      <p className="text-[11px] font-mono text-brand-slate/75 italic">
-                        Select an option to test your understanding. Immediate feedback will modify your Comprehension Mastery index.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {loading && (
-                  <div className="flex justify-start">
-                    <div className="border border-dashed border-brand-border bg-brand-cream/30 p-5 flex items-center gap-3 font-mono text-xs text-brand-slate/80">
-                      <span className="w-2 h-2 rounded-full bg-brand-gold animate-ping"></span>
-                      <span>Critiquing responses, mutating cognitive profiles, adapting explanation tree...</span>
-                    </div>
-                  </div>
-                )}
-
-                <div ref={chatEndRef} />
-              </div>
-
-              {/* INTERACTIVE FORM ACTIONS / SCAFFOLDING */}
-              <div className="border-t border-brand-border p-6 bg-brand-bg flex flex-col gap-4">
-                
-                {/* SCAFFOLD QUICK ACTIONS */}
-                {!activeQuiz && !loading && (
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => sendMessage("Break this down using an analogy")}
-                      className="border border-brand-border hover:bg-brand-cream text-brand-navy font-mono text-[11px] px-3 py-1.5 rounded transition duration-150 font-bold"
-                    >
-                      💡 Request Analogy
-                    </button>
-                    <button
-                      onClick={() => sendMessage("Explain this with technical code specifications and APIs")}
-                      className="border border-brand-border hover:bg-brand-cream text-brand-navy font-mono text-[11px] px-3 py-1.5 rounded transition duration-150 font-bold"
-                    >
-                      ⚙️ Technical Spec Deep-Dive
-                    </button>
-                    <button
-                      onClick={() => sendMessage("Verify my understanding with a quiz challenge")}
-                      className="border border-brand-border hover:bg-brand-cream text-brand-navy font-mono text-[11px] px-3 py-1.5 rounded transition duration-150 font-bold"
-                    >
-                      🎯 Take Verification Challenge
-                    </button>
-                  </div>
-                )}
-
-                {/* TEXT MESSAGE FORM */}
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    sendMessage(inputMessage)
-                  }}
-                  className="flex gap-3"
-                >
-                  <input
-                    type="text"
-                    disabled={loading || activeQuiz !== null}
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    placeholder={
-                      activeQuiz 
-                        ? "Please select a quiz option to proceed..." 
-                        : "Type your query or demonstrate your understanding here..."
+          {/* FLOATING OMNI-CONTAINER CHAT STRIP (Now Sticky) */}
+          <div className="sticky bottom-0 w-full bg-gradient-to-t from-[#FDFBF7] via-[#FDFBF7] to-transparent pt-4 pb-4 px-4 md:px-6 z-30 flex justify-center shrink-0">
+            <div className="max-w-4xl w-full bg-white border-2 border-[#0A192F] rounded-xl p-3 shadow-lg flex items-center gap-3">
+              <input 
+                type="file" 
+                id="image-upload" 
+                className="hidden" 
+                accept="image/*"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    const fileName = e.target.files[0].name;
+                    setUnrestrictedQuery(prev => prev + (prev ? " " : "") + `[Attached Image Context: ${fileName}]`);
+                    if(sessionMode !== 'Exploratory Deep-Dive') {
+                      setSessionMode('Exploratory Deep-Dive');
                     }
-                    className="flex-1 bg-brand-cream border border-brand-border px-4 py-3.5 text-sm focus:outline-none focus:ring-1 focus:ring-brand-border disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <button
-                    type="submit"
-                    disabled={loading || activeQuiz !== null || !inputMessage.trim()}
-                    className="bg-brand-navy hover:bg-brand-slate text-brand-bg font-bold px-6 py-3.5 text-xs font-mono tracking-widest uppercase transition duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                  >
-                    Submit Response
-                  </button>
-                </form>
-              </div>
-
+                    e.target.value = null;
+                  }
+                }}
+              />
+              <button 
+                onClick={() => document.getElementById('image-upload').click()}
+                title="Attach Image"
+                className="w-10 h-10 bg-slate-100 hover:bg-[#0A192F] hover:text-white rounded-lg flex items-center justify-center border border-slate-200 text-lg font-bold transition-all shrink-0"
+              >
+                +
+              </button>
+              <input 
+                type="text"
+                value={unrestrictedQuery}
+                onChange={(e) => {
+                  setUnrestrictedQuery(e.target.value);
+                  // Auto-switch to Mode B if user types here
+                  if(sessionMode !== 'Exploratory Deep-Dive') {
+                    setSessionMode('Exploratory Deep-Dive');
+                  }
+                }}
+                placeholder="Type an exploratory topic or follow-up query..."
+                className="flex-1 text-sm bg-transparent px-2 py-3 focus:outline-none font-medium text-[#0A192F]"
+                onKeyDown={(e) => { if(e.key === 'Enter') handleInitializeEngine(); }}
+              />
+              <button 
+                onClick={handleInitializeEngine}
+                disabled={loading}
+                className="bg-[#0A192F] text-white font-mono text-xs uppercase font-bold tracking-wider px-5 py-3 rounded-lg transition-all disabled:opacity-50 shrink-0"
+              >
+                Send
+              </button>
             </div>
-          )}
+          </div>
         </main>
-
       </div>
+
+      {/* FOOTER */}
+      <footer className="bg-white border-t border-slate-200 px-6 py-3 flex justify-between items-center text-[10px] font-mono text-slate-400 z-10 shrink-0">
+        <div>BUILT SOLO BY JAYMIN // APL RAJKOT 2026</div>
+        <div>ENGINE FRAME STABLE</div>
+      </footer>
     </div>
-  )
+  );
 }
+
+export default App;
