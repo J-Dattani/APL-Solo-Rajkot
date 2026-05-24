@@ -76,6 +76,19 @@ session_manager = SessionManager(col=sessions_col)
 # ----------------------------------------------------
 # 2. GEMINI NATIVE SDK INITIALIZATION
 # ----------------------------------------------------
+# Proactively load .env file from root or backend directory if present
+for env_path in [".env", "backend/.env", "../.env"]:
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, val = line.split("=", 1)
+                        os.environ[key.strip()] = val.strip().strip('"').strip("'")
+        except Exception as e:
+            print(f"Error reading .env file at {env_path}: {e}")
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 # If not present in env, we will try to look for the default google configuration or raise warning
 if not GEMINI_API_KEY:
